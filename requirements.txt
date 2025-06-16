@@ -1,0 +1,7 @@
+openai
+pyodbc
+graphviz
+streamlit
+pandas
+lida
+PIL
