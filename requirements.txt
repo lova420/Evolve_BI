@@ -1,7 +1,7 @@
 openai
-pyodbc
+psycopg2-binary
 graphviz
 streamlit
 pandas
 lida
-PIL
+pillow

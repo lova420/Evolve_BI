@@ -7,9 +7,7 @@ import io
 import base64
 import os
 import re
-from dotenv import load_dotenv
 from dependencies import chat_completion, connection_setup, data_graph_query, navigate_to_database_details, close_table_details
-load_dotenv()
 
 openai_key = st.secrets["OPENAI_KEY"]
 os.makedirs("data", exist_ok=True)
@@ -20,8 +18,7 @@ st.set_page_config(
     page_icon="📊",
 )
 
-st.markdown("""
-    <style>
+st.markdown("""<style>
         /* Main styles */
         .gradient-text {
             background: linear-gradient(45deg, #2E86AB, #23C9B6);
@@ -87,8 +84,7 @@ st.markdown("""
             border-left: 4px solid #ffc107;
             margin: 16px 0;
         }
-    </style>
-""", unsafe_allow_html=True)
+    </style>""", unsafe_allow_html=True)
 
 if "active_tab" not in st.session_state:
     st.session_state["active_tab"] = "main"
@@ -101,21 +97,17 @@ if "selected_db" not in st.session_state:
 
 if st.session_state["active_tab"] == "main":
     st.markdown('<h1>Evolve: Turning Questions into Visual Insights 📊</h1>', unsafe_allow_html=True)
-    st.markdown("""
-    <div style="background-color: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 4px solid #23C9B6;">
+    st.markdown("""<div style="background-color: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 4px solid #23C9B6;">
         Evolve is an AI-powered data visualization platform that enables users to effortlessly generate the insightful graphs
         and charts by asking natural language questions about their data. It simplifies data analysis by bridging the gap 
         between raw data and actionable visualizations, utilizing the power of Large Language Models(LLMs) to interpret queries
         and automate the process of creating meaningful graphs.
-    </div>
-    """, unsafe_allow_html=True)
+    </div>""", unsafe_allow_html=True)
     st.markdown("----")
-    st.sidebar.markdown("""
-    <h1 style="color: #2E86AB; border-bottom: 2px solid #23C9B6; padding-bottom: 8px;">
+    st.sidebar.markdown("""<h1 style="color: #2E86AB; border-bottom: 2px solid #23C9B6; padding-bottom: 8px;">
         ⚙️ Setup
-    </h1>
-    """, unsafe_allow_html=True)
-    cursor.execute("SELECT name FROM sys.databases")
+    </h1>""", unsafe_allow_html=True)
+    cursor.execute("SELECT datname FROM pg_database")
     dbs = ["Select an option"] + [db[0] for db in cursor.fetchall()]
     select_db = st.sidebar.selectbox(
         "Select Database",
@@ -127,10 +119,22 @@ if st.session_state["active_tab"] == "main":
     if select_db != "Select an option":
         st.session_state["selected_db"] = select_db
         st.sidebar.button("View", on_click=navigate_to_database_details)
-        cursor.execute(f"USE [{select_db}]")
-        cursor.execute("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'")
+        
+        # Reconnect to the selected database
+        connection, cursor = connection_setup(select_db)
+        
+        # Get all schemas in the selected database
+        cursor.execute("SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ('pg_catalog', 'information_schema') ORDER BY schema_name;")
+        schemas = [schema[0] for schema in cursor.fetchall()]
+        
+        # Add schema selection
+        select_schema = st.sidebar.selectbox("Select Schema", options=schemas, index=0)
+        
+        # Update the table query to include schema
+        cursor.execute(f"SELECT table_name FROM information_schema.tables WHERE table_schema = '{select_schema}' AND table_type = 'BASE TABLE'")
         tables = [table[0] for table in cursor.fetchall()]
         select_tables = st.sidebar.multiselect("Select Tables", options=tables, placeholder="Choose tables")
+
         if select_tables:
             st.session_state["selected_tables"] = select_tables
             if st.sidebar.checkbox("See Details", value=False):
@@ -138,19 +142,29 @@ if st.session_state["active_tab"] == "main":
                 st.graphviz_chart(dot)
                 st.write("----")
             if len(select_tables) == 1:
-                table_query = f"SELECT * FROM {select_tables[0]}"
+                # Update the table query to include schema
+                table_query = f"SELECT * FROM {select_schema}.{select_tables[0]}"
                 table_data = pd.read_sql(table_query, connection)
                 os.makedirs("data", exist_ok=True)
                 file_path = os.path.join("data", f"{select_tables[0]}.csv")
                 table_data.to_csv(file_path, index=False)
-            else:
-                cursor.execute(f"USE {select_db}")
+            if len(select_tables) > 1:
                 temp = ""
                 for i in select_tables:
-                    schema = f"SELECT COLUMN_NAME AS [Column Name], DATA_TYPE AS [Data Type], CHARACTER_MAXIMUM_LENGTH AS [Max Length], IS_NULLABLE AS [Is Nullable] FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{i}' AND TABLE_SCHEMA = 'dbo' ORDER BY ORDINAL_POSITION;"
-                    table = pd.read_sql(schema, connection)
-                    temp += f"{i}\n{table}\n\n"
-                prompt = temp + "Generate SQL query : Combine all the tables only on avaliable columns"
+                    # Update the schema query to include the selected schema
+                    schema_query = f"""
+                    SELECT COLUMN_NAME AS "Column Name", 
+                           DATA_TYPE AS "Data Type", 
+                           CHARACTER_MAXIMUM_LENGTH AS "Max Length", 
+                           IS_NULLABLE AS "Is Nullable" 
+                    FROM INFORMATION_SCHEMA.COLUMNS 
+                    WHERE TABLE_NAME = '{i}' 
+                    AND TABLE_SCHEMA = '{select_schema}' 
+                    ORDER BY ORDINAL_POSITION;
+                    """
+                    table = pd.read_sql(schema_query, connection)
+                    temp += f"{select_schema}.{i}\n{table}\n\n"
+                prompt = temp + "Generate SQL query: Combine all the tables only on available columns"
                 table_query = chat_completion(prompt, openai_key)
                 table_data = pd.read_sql(table_query, connection)
                 file_path = os.path.join("data", f"{select_tables[0]}.csv")
@@ -171,19 +185,15 @@ if st.session_state["active_tab"] == "main":
     else:
         selected_dataset = file_path
     if select_db == "Select an option" and not upload_own_data:
-        st.markdown("""
-        <div class="warning-box">
+        st.markdown("""<div class="warning-box">
             <strong>⚠️ Note:</strong> Select a database or upload CSV data to explore its details!
-        </div>
-        """, unsafe_allow_html=True)
+        </div>""", unsafe_allow_html=True)
     select_tables = st.session_state["selected_tables"]
     select_db = st.session_state["selected_db"]
     if len(select_tables) > 0 or select_db != "Select an option" or upload_own_data:
-        st.sidebar.markdown("""
-        <h3 style="color: #2E86AB; margin-top: 20px;">
+        st.sidebar.markdown("""<h3 style="color: #2E86AB; margin-top: 20px;">
             🧠 Text Generation Model
-        </h3>
-        """, unsafe_allow_html=True)
+        </h3>""", unsafe_allow_html=True)
         models = ["gpt-4o", "gpt-3.5-turbo", "gpt-3.5-turbo-16k"]
         selected_model = st.sidebar.selectbox(
             "Select Model",
@@ -233,11 +243,9 @@ if st.session_state["active_tab"] == "main":
             st.write(str(summary))
         st.markdown("----")
         if summary:
-            st.sidebar.markdown("""
-            <h3 style="color: #2E86AB; margin-top: 20px;">
+            st.sidebar.markdown("""<h3 style="color: #2E86AB; margin-top: 20px;">
                 🎯 Goal Selection
-            </h3>
-            """, unsafe_allow_html=True)
+            </h3>""", unsafe_allow_html=True)
             num_goals = st.sidebar.slider(
                 "Number of goals to generate",
                 min_value=1,
@@ -258,23 +266,31 @@ if st.session_state["active_tab"] == "main":
             selected_goal = st.selectbox('Choose a generated goal', options=goal_questions, index=0)
             display_query = st.checkbox("Display Query")
             if display_query:
-                cursor.execute(f"USE {select_db}")
+                cursor.execute(f"SET search_path TO {select_db}")
                 temp = ""
                 for i in select_tables:
-                    query = f"SELECT COLUMN_NAME AS [Column Name], DATA_TYPE AS [Data Type], CHARACTER_MAXIMUM_LENGTH AS [Max Length], IS_NULLABLE AS [Is Nullable] FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{i}' AND TABLE_SCHEMA = 'dbo' ORDER BY ORDINAL_POSITION;"
+                    query = f"""
+                                SELECT 
+                                    COLUMN_NAME AS "Column Name", 
+                                    DATA_TYPE AS "Data Type", 
+                                    CHARACTER_MAXIMUM_LENGTH AS "Max Length", 
+                                    IS_NULLABLE AS "Is Nullable" 
+                                FROM INFORMATION_SCHEMA.COLUMNS 
+                                WHERE TABLE_NAME = '{i}' 
+                                AND TABLE_SCHEMA = '{select_schema}'
+                                ORDER BY ORDINAL_POSITION;
+                            """ 
                     table = pd.read_sql(query, connection)
-                    temp += f"{i}\n{table}\n\n"
+                    temp += f"{select_schema}.{i}\n{table}\n\n"
                 prompt = f"{temp}\n{selected_goal}\nGenerate SQL query : Based on above tables schema's and question"
                 table_query = chat_completion(prompt, openai_key)
                 st.code(table_query, language="sql")
             selected_goal_index = goal_questions.index(selected_goal)
             selected_goal_object = goals[selected_goal_index]
             if selected_goal_object:
-                st.sidebar.markdown("""
-                <h3 style="color: #2E86AB; margin-top: 20px;">
+                st.sidebar.markdown("""<h3 style="color: #2E86AB; margin-top: 20px;">
                     📈 Visualization Options
-                </h3>
-                """, unsafe_allow_html=True)
+                </h3>""", unsafe_allow_html=True)
                 visualization_libraries = ["seaborn", "matplotlib", "plotly"]
                 visualization_types = ["Line Plot", "Scatter Plot", "Bar Chart", "Pie Chart", "Histogram", "Box Plot", "Violin Plot", "Heatmap", "Pairplot", "Jointplot"]
                 selected_library = st.sidebar.selectbox(
@@ -321,12 +337,10 @@ if st.session_state["active_tab"] == "main":
                 st.markdown('<h4 class="custom-header">🖥️ Visualization Code</h4>', unsafe_allow_html=True)
                 st.code(selected_viz.code)
 elif st.session_state["active_tab"] == "database_details":
-    st.markdown(f"""
-    <h4 style='color: #2E86AB; background-color: #f8f9fa; 
+    st.markdown(f"""<h4 style='color: #2E86AB; background-color: #f8f9fa; 
                 padding: 16px; border-radius: 8px; border-left: 4px solid #23C9B6;'>
         🗄️ Database Graph Visualization
-    </h4>
-    """, unsafe_allow_html=True)
+    </h4>""", unsafe_allow_html=True)
     st.write("----")
     select_db = st.session_state["selected_db"]
     select_tables = st.session_state["selected_tables"]
