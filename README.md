@@ -51,8 +51,13 @@ A Self-Service Business Intelligence (BI) web app built using [Streamlit](https:
 📁 Project Structure
 Evolve_BI/
 │
+
 ├── streamlit_main.py                 # Main Streamlit application
+
 ├── dependencies.py                   # Helper functions (DB, charts, etc.)
+
 ├── data/                             # Sample datasets or uploaded files
+
 ├── requirements.txt                  # Python dependencies
+
 ├── README.md                         # Project documentation
