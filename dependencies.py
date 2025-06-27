@@ -10,13 +10,13 @@ def chat_completion(prompt,openai_key):
     result="--"+output.split("```")[1]
     return result
 
-def connection_setup(database_name=st.secrets["database"]):
+def connection_setup(database_name=st.secrets["DATABASE"]):
     connection = psycopg2.connect(
-        host=st.secrets["host"],
+        host=st.secrets["HOST"],
         database=database_name,
-        port=st.secrets["port"],
-        user=st.secrets["user"],
-        password=st.secrets["password"]
+        port=st.secrets["PORT"],
+        user=st.secrets["USER"],
+        password=st.secrets["PASSWORD"]
     )
     cursor = connection.cursor()
     return connection, cursor
